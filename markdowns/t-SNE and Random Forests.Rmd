@@ -1,0 +1,73 @@
+---
+title: "t-SNE & Random Forests"
+author: "Murat Koptur"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.path='figures/rf-')
+```
+
+```{r message=FALSE, warning=FALSE}
+library(caret)
+library(dplyr)
+library(Rtsne)
+```
+
+```{r}
+data <- read.csv("../data/SCADI.csv")
+
+data <- mutate_at(data, vars(-one_of("Age")), as.factor)
+data <- data[,lapply(data, nlevels) >= 2]
+```
+
+```{r}
+summary(data)
+```
+
+```{r}
+colors = rainbow(length(unique(data$Classes)))
+names(colors) = unique(data$Classes)
+```
+
+```{r}
+tsne <- Rtsne(data[,-1], dims = 2, perplexity=15, verbose=TRUE, max_iter = 500)
+plot(tsne$Y, t='n', main="T-SNE")
+text(tsne$Y, labels=data$Classes, col=colors[data$Classes])
+```
+
+```{r}
+indTraining <- createDataPartition(data$Classes, p = .8, list = FALSE)
+training <- data[indTraining,]
+test <- data[-indTraining,]
+```
+
+```{r}
+train_control <- trainControl(
+  method = "repeatedcv",
+  number = 10,
+  repeats = 10,
+  verboseIter = TRUE,
+  allowParallel = TRUE
+)
+```
+
+```{r message=FALSE, warning=FALSE}
+data.tree <- train(Classes ~ .,
+                   data = training,
+                   method = "RRF",
+                   trControl = train_control)
+```
+
+```{r}
+plot(data.tree)
+plot(data.tree$finalModel)
+```
+
+```{r}
+pred_vals <- predict(data.tree, test)
+true_vals <- test$Classes
+confusionMatrix(pred_vals, true_vals)
+```
+
