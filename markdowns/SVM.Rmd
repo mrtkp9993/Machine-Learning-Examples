@@ -1,0 +1,170 @@
+---
+title: "SVM"
+author: "Murat Koptur"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.path='figures/svm-')
+```
+
+```{r}
+library(caret)
+library(dplyr)
+library(GGally)
+library(ggplot2)
+library(ggthemes)
+library(mlr)
+library(reshape2)
+```
+
+
+```{r}
+data <- read.csv(file = "../data/Breast_Cancer_Coimbra_DataSet.csv")
+str(data)
+```
+
+```{r}
+data$Classification <- factor(
+  data$Classification,
+  levels = c(1, 2),
+  labels = c("Healthy", "Patient")
+)
+str(data)
+```
+
+```{r}
+data_scaled <- mutate_if(data, is.numeric, scale)
+head(data_scaled)
+```
+
+```{r}
+## Visual Data Exploration
+ggplot(melt(data_scaled), aes(value)) +
+  geom_histogram(aes(y = ..ncount..)) +
+  geom_density(aes(y = ..scaled..)) +
+  facet_wrap( ~ variable, scales = "free") +
+  theme_fivethirtyeight()
+```
+
+```{r}
+ggplot(melt(data_scaled), aes("value", value)) +
+  geom_violin() +
+  geom_point() + facet_wrap(~ variable, scales = "free") +
+  theme_fivethirtyeight()
+```
+
+```{r}
+ggplot(data_scaled, aes(Classification)) + geom_bar() +
+  theme_fivethirtyeight()
+```
+
+```{r}
+ggparcoord(
+  data_scaled,
+  columns = 1:9,
+  alpha = .30,
+  scale = "center",
+  groupColumn = "Classification"
+)
+```
+
+```{r}
+# Training
+indTraining <-
+  createDataPartition(data_scaled$Classification, p = .8, list = FALSE)
+data_scaled_train <- data_scaled[indTraining, ]
+data_scaled_test <- data_scaled[-indTraining, ]
+```
+
+
+```{r}
+train_task = makeClassifTask(id = "Breast Cancer Coimbra training",
+                             data = data_scaled_train,
+                             target = "Classification")
+test_task = makeClassifTask(id = "Breast Cancer Coimbra test",
+                            data = data_scaled_test,
+                            target = "Classification")
+print(train_task)
+print(test_task)
+```
+
+```{r}
+#libsvm
+svm <-
+  makeLearner("classif.ksvm", id = "svm", predict.type = "prob")
+#xgboost
+xgb <-
+  makeLearner("classif.xgboost", id = "xgb", predict.type = "prob")
+# Penalized Logistic Regression
+rrf <-
+  makeLearner("classif.rpart", id = "rrf", predict.type = "prob")
+#Regularized Random Forests
+plr <-
+  makeLearner("classif.penalized", id = "plr", predict.type = "prob")
+
+learners <- list(svm, xgb, rrf, plr)
+```
+
+```{r}
+cv <- makeResampleDesc(
+  method = "RepCV",
+  reps = 10,
+  folds = 10,
+  stratify = TRUE
+)
+```
+
+```{r}
+measures <- list(acc, f1, timetrain)
+```
+
+```{r}
+train_res <-
+  benchmark(
+    learners = learners,
+    tasks = train_task,
+    resamplings = cv,
+    measures = measures
+  )
+print(train_res)
+```
+
+```{r}
+# Tuning
+getLearnerParamSet(svm)
+```
+
+```{r}
+par_set = makeParamSet(makeNumericParam("C", lower = -5, upper = 15, trafo = function(x) 2^x),
+                       makeNumericParam("sigma", lower = -15, upper = 3, trafo = function(x) 2^x))
+ctrl = makeTuneControlRandom(maxit = 20)
+res = tuneParams(
+  learner = svm,
+  task = train_task,
+  resampling = cv,
+  measures = measures,
+  par.set = par_set,
+  control = ctrl
+)
+print(res)
+```
+
+```{r}
+lrn <- setHyperPars(makeLearner("classif.ksvm", predict.type = "prob"), par.vals = res$x)
+fit <- train(lrn, train_task)
+getLearnerModel(fit)
+```
+
+```{r}
+preds <- predict(fit, test_task)
+```
+
+
+```{r}
+roc <-
+  generateThreshVsPerfData(preds, measures = list(fpr, tpr))
+plotROCCurves(roc)
+```
+
